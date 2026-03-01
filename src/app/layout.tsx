@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
+import { PusherDebug } from "@/components/PusherDebug";
 
 export const metadata: Metadata = {
   title: "PMTraders - Shop Manager",
@@ -19,6 +20,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <Providers>{children}</Providers>
+        {/* <PusherDebug /> */}
       </body>
     </html>
   );

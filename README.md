@@ -1,3 +1,7 @@
+---
+**Created:** 2025-12-13 21:33:49
+**Last Modified:** 2025-12-13 22:25:51
+---
 # PMTraders Shop Manager Dashboard
 
 A simplified, mobile-friendly dashboard designed for shop managers to handle day-to-day retail operations.

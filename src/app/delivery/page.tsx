@@ -1,8 +1,8 @@
 "use client";
 
 import { useAuth } from "@/lib/auth";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
 import { MainLayout } from "@/components/layout/Sidebar";
 import { useQuery, useMutation, gql } from "@apollo/client";
 import Link from "next/link";
@@ -22,8 +22,8 @@ import {
 
 // Query for orders ready for delivery (READY_FOR_PICKUP, SHIPPED, OUT_FOR_DELIVERY)
 const ORDERS_FOR_DELIVERY = gql`
-  query OrdersForDelivery($first: Int) {
-    ordersReadyForDelivery(first: $first) {
+  query OrdersForDelivery($first: Int, $ids: [ID!]) {
+    ordersReadyForDelivery(first: $first, ids: $ids) {
       totalCount
       edges {
         node {
@@ -61,33 +61,39 @@ const UPDATE_DELIVERY_STATUS = gql`
   }
 `;
 
-// Status badge colors and labels
+// Status badge colors and labels (backend uses lowercase)
 const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
-    "PLACED": { label: "Order Placed", color: "text-gray-600", bgColor: "bg-gray-100" },
-    "PROCESSING": { label: "Processing", color: "text-blue-600", bgColor: "bg-blue-100" },
-    "READY_FOR_PICKUP": { label: "Ready for Pickup", color: "text-yellow-600", bgColor: "bg-yellow-100" },
-    "SHIPPED": { label: "Shipped", color: "text-indigo-600", bgColor: "bg-indigo-100" },
-    "OUT_FOR_DELIVERY": { label: "Out for Delivery", color: "text-orange-600", bgColor: "bg-orange-100" },
-    "DELIVERED": { label: "Delivered", color: "text-green-600", bgColor: "bg-green-100" },
-    "FAILED": { label: "Failed", color: "text-red-600", bgColor: "bg-red-100" },
-    "CANCELLED": { label: "Cancelled", color: "text-gray-500", bgColor: "bg-gray-100" },
+    "placed": { label: "Order Placed", color: "text-gray-600", bgColor: "bg-gray-100" },
+    "processing": { label: "Processing", color: "text-blue-600", bgColor: "bg-blue-100" },
+    "ready_for_pickup": { label: "Ready for Pickup", color: "text-yellow-600", bgColor: "bg-yellow-100" },
+    "shipped": { label: "Shipped", color: "text-indigo-600", bgColor: "bg-indigo-100" },
+    "out_for_delivery": { label: "Out for Delivery", color: "text-orange-600", bgColor: "bg-orange-100" },
+    "delivered": { label: "Delivered", color: "text-green-600", bgColor: "bg-green-100" },
+    "failed": { label: "Failed", color: "text-red-600", bgColor: "bg-red-100" },
+    "cancelled": { label: "Cancelled", color: "text-gray-500", bgColor: "bg-gray-100" },
 };
 
-// Get next status for a given status
+// Get next status for a given status (lowercase)
 const getNextStatus = (current: string): string | null => {
     const transitions: Record<string, string> = {
-        "READY_FOR_PICKUP": "OUT_FOR_DELIVERY",
-        "SHIPPED": "OUT_FOR_DELIVERY",
-        "OUT_FOR_DELIVERY": "DELIVERED",
+        "placed": "processing",
+        "processing": "ready_for_pickup",
+        "ready_for_pickup": "shipped",
+        "shipped": "out_for_delivery",
+        "out_for_delivery": "delivered",
     };
-    return transitions[current] || null;
+    return transitions[(current || "").toLowerCase()] || null;
 };
 
-export default function DeliveryPage() {
+function DeliveryContent() {
     const { isAuthenticated, isLoading: authLoading } = useAuth();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [updatingId, setUpdatingId] = useState<string | null>(null);
     const [statusFilter, setStatusFilter] = useState<string>("all");
+
+    // Parse specific deep-link IDs if provided
+    const requestedIds = searchParams.get("ids")?.split(",") || null;
 
     useEffect(() => {
         if (!authLoading && !isAuthenticated) {
@@ -96,7 +102,11 @@ export default function DeliveryPage() {
     }, [authLoading, isAuthenticated, router]);
 
     const { data: deliveriesData, loading: loadingDeliveries, refetch } = useQuery(ORDERS_FOR_DELIVERY, {
-        variables: { first: 100 },
+        variables: {
+            first: requestedIds ? 100 : 50,
+            ...(requestedIds ? { ids: requestedIds } : {})
+        },
+
         skip: !isAuthenticated,
         fetchPolicy: 'network-only', // Always fetch fresh data
         pollInterval: 30000, // Auto-refresh every 30 seconds
@@ -126,28 +136,34 @@ export default function DeliveryPage() {
 
     const rawDeliveries = deliveriesData?.ordersReadyForDelivery?.edges || [];
 
-    // Deduplicate by orderId (in case there are multiple tracking records for the same order)
-    const seenOrderIds = new Set<string>();
-    const allDeliveries = rawDeliveries.filter((edge: any) => {
-        const orderId = edge.node.orderId;
-        if (seenOrderIds.has(orderId)) {
-            return false; // Skip duplicate
-        }
-        seenOrderIds.add(orderId);
-        return true;
-    });
+    // Active = orders that still need action. Delivered/failed/cancelled are excluded from counts.
+    const ACTIVE_STATUSES = ["placed", "processing", "ready_for_pickup", "shipped", "out_for_delivery"];
+    const allDeliveries = rawDeliveries.filter(
+        (edge: any) => ACTIVE_STATUSES.includes((edge.node.status || "").toLowerCase())
+    );
 
-    // Filter deliveries by status
+    // "Delivered Today" computed separately from raw data (before the active filter)
+    const todayStr = new Date().toDateString();
+    const deliveredTodayCount = rawDeliveries.filter((edge: any) => {
+        const status = (edge.node.status || "").toLowerCase();
+        if (status !== "delivered") return false;
+        const updatedAt = edge.node.statusUpdatedAt;
+        if (!updatedAt) return false;
+        return new Date(updatedAt).toDateString() === todayStr;
+    }).length;
+
+    // Filter deliveries by status (compare lowercase)
     const deliveries = statusFilter === "all"
         ? allDeliveries
-        : allDeliveries.filter((e: any) => e.node.status === statusFilter);
+        : allDeliveries.filter((e: any) => (e.node.status || "").toLowerCase() === statusFilter.toLowerCase());
 
-    // Count by status
+    // Count by status (backend returns lowercase statuses)
     const statusCounts = allDeliveries.reduce((acc: Record<string, number>, edge: any) => {
-        const status = edge.node.status;
+        const status = (edge.node.status || "").toLowerCase();
         acc[status] = (acc[status] || 0) + 1;
         return acc;
     }, {});
+
 
     const handleStatusUpdate = async (orderId: string, currentStatus: string) => {
         const nextStatus = getNextStatus(currentStatus);
@@ -216,13 +232,13 @@ export default function DeliveryPage() {
                 </div>
 
                 <div
-                    className={`stat-card cursor-pointer transition-all ${statusFilter === 'READY_FOR_PICKUP' ? 'ring-2 ring-primary-500' : ''}`}
-                    onClick={() => setStatusFilter('READY_FOR_PICKUP')}
+                    className={`stat-card cursor-pointer transition-all ${statusFilter === 'ready_for_pickup' ? 'ring-2 ring-primary-500' : ''}`}
+                    onClick={() => setStatusFilter('ready_for_pickup')}
                 >
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="stat-label">Ready for Pickup</p>
-                            <p className="stat-value text-yellow-600">{statusCounts['READY_FOR_PICKUP'] || 0}</p>
+                            <p className="stat-value text-yellow-600">{statusCounts['ready_for_pickup'] || 0}</p>
                         </div>
                         <div className="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center">
                             <Package className="w-6 h-6 text-yellow-600" />
@@ -231,13 +247,13 @@ export default function DeliveryPage() {
                 </div>
 
                 <div
-                    className={`stat-card cursor-pointer transition-all ${statusFilter === 'OUT_FOR_DELIVERY' ? 'ring-2 ring-primary-500' : ''}`}
-                    onClick={() => setStatusFilter('OUT_FOR_DELIVERY')}
+                    className={`stat-card cursor-pointer transition-all ${statusFilter === 'out_for_delivery' ? 'ring-2 ring-primary-500' : ''}`}
+                    onClick={() => setStatusFilter('out_for_delivery')}
                 >
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="stat-label">Out for Delivery</p>
-                            <p className="stat-value text-orange-600">{statusCounts['OUT_FOR_DELIVERY'] || 0}</p>
+                            <p className="stat-value text-orange-600">{statusCounts['out_for_delivery'] || 0}</p>
                         </div>
                         <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center">
                             <Truck className="w-6 h-6 text-orange-600" />
@@ -246,13 +262,13 @@ export default function DeliveryPage() {
                 </div>
 
                 <div
-                    className={`stat-card cursor-pointer transition-all ${statusFilter === 'DELIVERED' ? 'ring-2 ring-primary-500' : ''}`}
-                    onClick={() => setStatusFilter('DELIVERED')}
+                    className={`stat-card cursor-pointer transition-all ${statusFilter === 'delivered' ? 'ring-2 ring-primary-500' : ''}`}
+                    onClick={() => setStatusFilter('delivered')}
                 >
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="stat-label">Delivered Today</p>
-                            <p className="stat-value text-green-600">{statusCounts['DELIVERED'] || 0}</p>
+                            <p className="stat-value text-green-600">{deliveredTodayCount}</p>
                         </div>
                         <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
                             <CheckCircle className="w-6 h-6 text-green-600" />
@@ -292,7 +308,8 @@ export default function DeliveryPage() {
                             const delivery = edge.node;
                             const isUpdating = updatingId === delivery.orderId;
                             const nextStatusLabel = getNextStatusLabel(delivery.status);
-                            const statusConfig = STATUS_CONFIG[delivery.status] || STATUS_CONFIG['PLACED'];
+                            const statusConfig = STATUS_CONFIG[(delivery.status || '').toLowerCase()] ?? { label: delivery.status || 'Unknown', color: 'text-gray-600', bgColor: 'bg-gray-100' };
+
 
                             return (
                                 <div key={`${delivery.orderId}-${index}`} className="p-6" style={{ borderBottom: '1px solid var(--secondary-100)' }}>
@@ -329,7 +346,7 @@ export default function DeliveryPage() {
                                                     {delivery.itemsCount} items
                                                 </span>
                                                 <span className="font-semibold" style={{ color: 'var(--primary-600)' }}>
-                                                    Rs. {delivery.orderTotal?.toFixed(2) || '0.00'}
+                                                    Rs. {delivery.orderTotal?.toFixed(0) || '0.00'}
                                                 </span>
                                                 <span style={{ color: 'var(--secondary-400)' }}>
                                                     <Clock className="w-4 h-4 inline mr-1" />
@@ -371,5 +388,13 @@ export default function DeliveryPage() {
                 )}
             </div>
         </MainLayout>
+    );
+}
+
+export default function DeliveryWrapper() {
+    return (
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div>}>
+            <DeliveryContent />
+        </Suspense>
     );
 }

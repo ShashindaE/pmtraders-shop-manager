@@ -15,7 +15,12 @@ import {
     Truck,
     RefreshCw,
     X,
+    Banknote,
+    CheckCircle,
+    ClipboardList,
+    Eye,
 } from "lucide-react";
+import Link from "next/link";
 
 export default function DriversPage() {
     const { isAuthenticated, isLoading: authLoading } = useAuth();
@@ -99,6 +104,8 @@ export default function DriversPage() {
         online: drivers.filter((e: any) => e.node.isOnline).length,
         active: drivers.filter((e: any) => e.node.isActive).length,
         activeDel: drivers.reduce((sum: number, e: any) => sum + (e.node.activeDeliveriesCount || 0), 0),
+        deliveriesToday: drivers.reduce((sum: number, e: any) => sum + (e.node.completedDeliveriesToday || 0), 0),
+        totalCashToday: drivers.reduce((sum: number, e: any) => sum + (e.node.todayCashCollected || 0), 0),
     };
 
     const handleCreate = () => {
@@ -162,7 +169,7 @@ export default function DriversPage() {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
                 <div className="stat-card">
                     <p className="stat-label">Total</p>
                     <p className="stat-value">{loading ? "..." : stats.total}</p>
@@ -176,8 +183,16 @@ export default function DriversPage() {
                     <p className="stat-value text-blue-600">{loading ? "..." : stats.active}</p>
                 </div>
                 <div className="stat-card">
-                    <p className="stat-label">Deliveries</p>
+                    <p className="stat-label">Pending Orders</p>
                     <p className="stat-value" style={{ color: 'var(--primary-600)' }}>{loading ? "..." : stats.activeDel}</p>
+                </div>
+                <div className="stat-card">
+                    <p className="stat-label">✅ Delivered Today</p>
+                    <p className="stat-value text-green-600">{loading ? "..." : stats.deliveriesToday}</p>
+                </div>
+                <div className="stat-card">
+                    <p className="stat-label">💵 Cash Today</p>
+                    <p className="stat-value text-orange-600">{loading ? "..." : `Rs. ${stats.totalCashToday.toLocaleString()}`}</p>
                 </div>
             </div>
 
@@ -201,7 +216,7 @@ export default function DriversPage() {
                     {drivers.map((edge: any) => {
                         const driver = edge.node;
                         return (
-                            <div key={driver.id} className="card p-6">
+                            <div key={driver.id} className="card p-6 hover:shadow-md transition-shadow">
                                 <div className="flex items-start justify-between mb-4">
                                     <div className="flex items-center gap-3">
                                         <div
@@ -239,18 +254,43 @@ export default function DriversPage() {
                                         )}
                                         {driver.isOnline && <span className="badge-info">Online</span>}
                                         {driver.activeDeliveriesCount > 0 && (
-                                            <span className="badge-primary">{driver.activeDeliveriesCount} deliveries</span>
+                                            <span className="badge-primary">{driver.activeDeliveriesCount} pending</span>
                                         )}
                                     </div>
+                                    {/* Per-driver cash & delivery mini-dashboard */}
+                                    <div className="grid grid-cols-3 gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--secondary-100)' }}>
+                                        <div className="text-center">
+                                            <p className="text-xs" style={{ color: 'var(--secondary-400)' }}>Pending</p>
+                                            <p className="font-bold text-sm" style={{ color: 'var(--primary-600)' }}>{driver.activeDeliveriesCount || 0}</p>
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-xs" style={{ color: 'var(--secondary-400)' }}>✅ Today</p>
+                                            <p className="font-bold text-sm text-green-600">{driver.completedDeliveriesToday || 0}</p>
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-xs" style={{ color: 'var(--secondary-400)' }}>💵 Cash</p>
+                                            <p className="font-bold text-sm text-orange-600">Rs. {(driver.todayCashCollected || 0).toLocaleString()}</p>
+                                        </div>
+                                    </div>
+                                    <p className="text-xs mt-1" style={{ color: 'var(--secondary-400)' }}>
+                                        {driver.totalDeliveriesCompleted || 0} total deliveries all-time
+                                    </p>
                                 </div>
 
                                 <div className="flex items-center gap-2 pt-4" style={{ borderTop: '1px solid var(--secondary-100)' }}>
-                                    <button
-                                        onClick={() => handleEdit(driver)}
+                                    <Link
+                                        href={`/drivers/${(() => { try { return atob(driver.id).split(':')[1]; } catch { return driver.id; } })()}`}
                                         className="btn-secondary flex-1 text-sm py-2 flex items-center justify-center gap-1"
                                     >
+                                        <Eye className="w-4 h-4" />
+                                        View Profile
+                                    </Link>
+                                    <button
+                                        onClick={() => handleEdit(driver)}
+                                        className="btn-secondary text-sm py-2 px-3"
+                                        title="Edit driver"
+                                    >
                                         <Edit className="w-4 h-4" />
-                                        Edit
                                     </button>
                                     <button
                                         onClick={() => {

@@ -284,7 +284,7 @@ export default function CreateOrderPage() {
                                                         {product.name}
                                                     </h3>
                                                     <p className="text-primary-600 font-semibold mt-1">
-                                                        {price ? `Rs. ${price.amount.toFixed(2)}` : "-"}
+                                                        {price ? `Rs. ${price.amount.toFixed(0)}` : "-"}
                                                     </p>
                                                     <button
                                                         onClick={() => addToCart(product, variants[0])}
@@ -411,7 +411,7 @@ export default function CreateOrderPage() {
                                                 {item.productName}
                                             </p>
                                             <p className="text-sm text-secondary-500">
-                                                Rs. {item.price.toFixed(2)}
+                                                Rs. {item.price.toFixed(0)}
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -446,7 +446,7 @@ export default function CreateOrderPage() {
                         <div className="flex justify-between items-center mb-4">
                             <span className="text-secondary-600">Subtotal</span>
                             <span className="text-xl font-bold text-secondary-900">
-                                Rs. {cartTotal.toFixed(2)}
+                                Rs. {cartTotal.toFixed(0)}
                             </span>
                         </div>
 

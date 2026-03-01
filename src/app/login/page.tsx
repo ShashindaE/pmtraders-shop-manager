@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { Loader2 } from "lucide-react";
 
@@ -10,6 +10,14 @@ export default function LoginPage() {
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
+
+    // Force-clear any stale auth state when login page loads
+    // This breaks the login loop: even if old tokens caused a redirect here,
+    // we ensure a clean slate so the next login attempt works cleanly
+    useEffect(() => {
+        localStorage.removeItem("saleor_token");
+        localStorage.removeItem("saleor_refresh_token");
+    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

@@ -121,6 +121,10 @@ export const ORDERS_LIST = gql`
             streetAddress1
             city
           }
+          metadata {
+            key
+            value
+          }
         }
       }
     }
@@ -135,10 +139,82 @@ export const ORDER_DETAILS = gql`
       created
       status
       paymentStatus
+      metadata {
+        key
+        value
+      }
       total {
         gross {
           amount
           currency
+        }
+      }
+      totalCaptured {
+        amount
+      }
+      totalBalance {
+        amount
+      }
+      totalAuthorized {
+        amount
+      }
+      transactions {
+        id
+        createdAt
+        name
+        message
+        pspReference
+        chargedAmount {
+          amount
+          currency
+        }
+        authorizedAmount {
+          amount
+          currency
+        }
+        events {
+          id
+          createdAt
+          message
+          pspReference
+          type
+          amount {
+            amount
+            currency
+          }
+          createdBy {
+            ... on User {
+              email
+            }
+            ... on App {
+              name
+            }
+          }
+        }
+      }
+      payments {
+        id
+        gateway
+        chargeStatus
+        created
+        total {
+          amount
+          currency
+        }
+        capturedAmount {
+          amount
+          currency
+        }
+        availableCaptureAmount {
+          amount
+          currency
+        }
+        transactions {
+          id
+          created
+          error
+          isSuccess
+          kind
         }
       }
       subtotal {
@@ -191,6 +267,19 @@ export const ORDER_DETAILS = gql`
         thumbnail {
           url
         }
+        variant {
+          id
+          product {
+            productType {
+              isShippingRequired
+              measurementType
+            }
+            metadata {
+              key
+              value
+            }
+          }
+        }
       }
       fulfillments {
         id
@@ -212,6 +301,10 @@ export const ORDER_DETAILS = gql`
         user {
           email
         }
+      }
+      metadata {
+        key
+        value
       }
     }
   }
@@ -264,6 +357,11 @@ export const PRODUCTS_LIST = gql`
           productType {
             id
             name
+            measurementType
+          }
+          metadata {
+            key
+            value
           }
           pricing {
             priceRange {
@@ -287,6 +385,23 @@ export const PRODUCTS_LIST = gql`
             name
             sku
             quantityAvailable
+            wholesalePrice {
+              id
+              priceAmount
+              currency
+              unit
+              active
+            }
+            channelListings {
+              channel {
+                id
+                slug
+              }
+              price {
+                amount
+                currency
+              }
+            }
             stocks {
               id
               quantity
@@ -377,6 +492,7 @@ export const PRODUCT_DETAILS = gql`
         id
         name
         hasVariants
+        measurementType
       }
       thumbnail {
         url
@@ -391,6 +507,13 @@ export const PRODUCT_DETAILS = gql`
         name
         sku
         quantityAvailable
+        wholesalePrice {
+          id
+          priceAmount
+          currency
+          unit
+          active
+        }
         pricing {
           price {
             gross {
@@ -427,6 +550,10 @@ export const PRODUCT_DETAILS = gql`
             }
           }
         }
+      }
+      metadata {
+        key
+        value
       }
     }
   }
@@ -468,6 +595,27 @@ export const PRODUCT_DELETE = gql`
     productDelete(id: $id) {
       product {
         id
+      }
+      errors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+// Update product metadata (for price_display_unit, etc.)
+export const UPDATE_PRODUCT_METADATA = gql`
+  mutation UpdateProductMetadata($id: ID!, $input: [MetadataInput!]!) {
+    updateMetadata(id: $id, input: $input) {
+      item {
+        ... on Product {
+          id
+          metadata {
+            key
+            value
+          }
+        }
       }
       errors {
         field
@@ -715,6 +863,9 @@ export const DRIVERS_LIST = gql`
           vehicleType
           vehicleNumber
           activeDeliveriesCount
+          completedDeliveriesToday
+          totalDeliveriesCompleted
+          todayCashCollected
           user {
             id
             firstName
@@ -890,6 +1041,69 @@ export const CHANNELS_LIST = gql`
       slug
       isActive
       currencyCode
+    }
+  }
+`;
+
+// ============================================================================
+// Driver Detail
+// ============================================================================
+
+export const DRIVER_DETAIL = gql`
+  query DriverDetail($id: ID!) {
+    driver(id: $id) {
+      id
+      isActive
+      isOnline
+      vehicleType
+      vehicleNumber
+      activeDeliveriesCount
+      completedDeliveriesToday
+      totalDeliveriesCompleted
+      todayCashCollected
+      cashInHand
+      lastRemittanceAt
+      totalCashRemitted
+      user {
+        id
+        firstName
+        lastName
+        email
+      }
+    }
+    ordersReadyForDelivery(first: 100) {
+      edges {
+        node {
+          id
+          orderId
+          orderNumber
+          status
+          customerName
+          shippingAddress
+          orderTotal
+          itemsCount
+          createdAt
+          statusUpdatedAt
+          assignedDriver {
+            id
+            firstName
+            lastName
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const COLLECT_DRIVER_CASH = gql`
+  mutation CollectDriverCash($input: CollectDriverCashInput!) {
+    collectDriverCash(input: $input) {
+      success
+      remittanceId
+      errors {
+        field
+        message
+      }
     }
   }
 `;

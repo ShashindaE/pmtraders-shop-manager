@@ -13,6 +13,7 @@ import {
     LogOut,
     Menu,
     X,
+    Building2,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -22,7 +23,9 @@ const navigation = [
     { name: "Products", href: "/products", icon: Package },
     { name: "Stock", href: "/stock", icon: Warehouse },
     { name: "Delivery", href: "/delivery", icon: Truck },
+
     { name: "Drivers", href: "/drivers", icon: Users },
+    { name: "Wholesale", href: "/wholesale", icon: Building2 },
 ];
 
 export function Sidebar() {
@@ -148,12 +151,17 @@ export function Sidebar() {
     );
 }
 
+import { NotificationBell } from "@/components/NotificationBell";
+
 export function MainLayout({ children }: { children: React.ReactNode }) {
     return (
         <div className="min-h-screen" style={{ backgroundColor: 'var(--secondary-50)' }}>
             <Sidebar />
             <main className="lg:pl-72">
-                <div className="p-4 lg:p-8 pt-16 lg:pt-8">{children}</div>
+                <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-gray-100 px-4 lg:px-8 h-16 flex items-center justify-end">
+                    <NotificationBell />
+                </header>
+                <div className="p-4 lg:p-8">{children}</div>
             </main>
         </div>
     );

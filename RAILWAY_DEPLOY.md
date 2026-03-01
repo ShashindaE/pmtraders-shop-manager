@@ -1,3 +1,7 @@
+---
+**Created:** 2025-12-20 12:26:13
+**Last Modified:** 2026-01-29 09:41:58
+---
 # 🚀 Deploy Shop Manager to Railway
 
 ## Prerequisites
@@ -118,6 +122,22 @@ pnpm start
 # Check for issues
 pnpm lint
 ```
+
+---
+
+## ⚡ Automated Deployment (Recommended)
+
+Start the full deployment pipeline (Stop -> Build -> Push -> Deploy) with a single command:
+
+```powershell
+./redeploy_shop_manager.ps1
+```
+
+This script:
+1. Stops any local docker instance
+2. Builds the image with correct production API args
+3. Pushes to GitHub Container Registry
+4. Triggers Railway redeployment
 
 ---
 

@@ -98,6 +98,51 @@ export default function ProductsPage() {
         return getTotalStock(variants) === 0;
     };
 
+    // Check if product is weighted
+    const isProductWeighted = (product: any) => {
+        return product.productType?.measurementType === "WEIGHTED";
+    };
+
+    // Format stock for display - show kg for weighted products
+    const formatStock = (qty: number, isWeighted: boolean) => {
+        if (isWeighted) {
+            const kg = qty / 40;
+            return kg >= 1 ? `${kg.toFixed(2).replace(/\.?0+$/, "")}kg` : `${(qty * 25)}g`;
+        }
+        return qty.toString();
+    };
+
+    // Get display price for weighted products (convert from 25g base unit to display unit)
+    const getDisplayPrice = (product: any) => {
+        const price = product.pricing?.priceRange?.start?.gross;
+        if (!price) return { amount: null, unit: "" };
+
+        const isWeighted = isProductWeighted(product);
+        if (!isWeighted) {
+            return { amount: price.amount, unit: "" };
+        }
+
+        // Get display unit from metadata (default: kg)
+        const displayUnitRaw = product.metadata?.find((m: any) => m.key === "price_display_unit")?.value || "kg";
+        let displayQty = 1000; // default kg in grams
+        let displayUnit = "kg";
+
+        if (displayUnitRaw.toLowerCase() === "kg" || displayUnitRaw === "1000") {
+            displayQty = 1000;
+            displayUnit = "kg";
+        } else if (displayUnitRaw.toLowerCase().endsWith("g")) {
+            const parsedGrams = parseInt(displayUnitRaw.toLowerCase().replace("g", ""), 10);
+            if (!isNaN(parsedGrams) && parsedGrams > 0) {
+                displayQty = parsedGrams;
+                displayUnit = displayUnitRaw.toLowerCase();
+            }
+        }
+
+        // Base price is per 25g unit, convert to display unit
+        const displayAmount = price.amount * (displayQty / 25);
+        return { amount: displayAmount, unit: `/${displayUnit}` };
+    };
+
     return (
         <MainLayout>
             {/* Header */}
@@ -106,10 +151,16 @@ export default function ProductsPage() {
                     <h1 className="page-title">Products</h1>
                     <p style={{ color: 'var(--secondary-500)' }} className="mt-1">{totalCount} products in catalog</p>
                 </div>
-                <Link href="/products/new" className="btn-primary flex items-center gap-2">
-                    <Plus className="w-5 h-5" />
-                    Add Product
-                </Link>
+                <div className="flex items-center gap-2">
+                    <Link href="/products/bulk-update" className="btn-secondary flex items-center gap-2">
+                        <Package className="w-5 h-5" />
+                        Bulk Update
+                    </Link>
+                    <Link href="/products/new" className="btn-primary flex items-center gap-2">
+                        <Plus className="w-5 h-5" />
+                        Add Product
+                    </Link>
+                </div>
             </div>
 
             {/* Search */}
@@ -121,7 +172,7 @@ export default function ProductsPage() {
                         placeholder="Search products by name..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="input-field pl-10"
+                        className="input-field !pl-12"
                     />
                 </div>
             </div>
@@ -147,7 +198,7 @@ export default function ProductsPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {products.map((edge: any) => {
                         const product = edge.node;
-                        const price = product.pricing?.priceRange?.start?.gross;
+                        const displayPrice = getDisplayPrice(product);
                         const isPublished = product.channelListings?.some((cl: any) => cl.isPublished);
                         const totalStock = getTotalStock(product.variants);
                         const lowStock = hasLowStock(product.variants);
@@ -214,11 +265,11 @@ export default function ProductsPage() {
                                     {/* Price & Stock */}
                                     <div className="flex items-center justify-between mt-2">
                                         <p className="text-lg font-bold" style={{ color: 'var(--primary-600)' }}>
-                                            {price ? `Rs. ${price.amount.toFixed(2)}` : "No price"}
+                                            {displayPrice.amount !== null ? `Rs. ${displayPrice.amount.toFixed(0)}${displayPrice.unit}` : "No price"}
                                         </p>
                                         <div className="flex items-center gap-1 text-sm" style={{ color: 'var(--secondary-600)' }}>
                                             <Box className="w-4 h-4" />
-                                            <span>{totalStock} in stock</span>
+                                            <span>{formatStock(totalStock, isProductWeighted(product))} in stock</span>
                                         </div>
                                     </div>
 

@@ -1,8 +1,8 @@
 "use client";
 
 import { useAuth } from "@/lib/auth";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
 import { MainLayout } from "@/components/layout/Sidebar";
 import { useQuery, useMutation } from "@apollo/client";
 import { PRODUCTS_LIST, STOCK_UPDATE, STOCK_CREATE, WAREHOUSES_LIST } from "@/lib/graphql";
@@ -21,12 +21,15 @@ import {
     Check,
 } from "lucide-react";
 
-export default function StockPage() {
+function StockContent() {
     const { isAuthenticated, isLoading: authLoading } = useAuth();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [searchQuery, setSearchQuery] = useState("");
     const [editingStock, setEditingStock] = useState<{ variantId: string; warehouseId: string } | null>(null);
     const [editQuantity, setEditQuantity] = useState("");
+    const [editUnit, setEditUnit] = useState<"kg" | "g">("kg");
+    const [editingIsWeighted, setEditingIsWeighted] = useState(false);
     const [addingStock, setAddingStock] = useState<string | null>(null);
     const [newWarehouse, setNewWarehouse] = useState("");
     const [newQuantity, setNewQuantity] = useState("");
@@ -38,9 +41,18 @@ export default function StockPage() {
         }
     }, [authLoading, isAuthenticated, router]);
 
+    // Parse specific deep-link IDs if provided
+    const requestedIds = searchParams.get("ids")?.split(",") || null;
+
     // Fetch products with stock info
     const { data: productsData, loading: loadingProducts, refetch } = useQuery(PRODUCTS_LIST, {
-        variables: { first: 100, channel: "lk" },
+        variables: {
+            first: requestedIds ? 100 : 50,
+            channel: "lk",
+            filter: {
+                ...(requestedIds ? { ids: requestedIds } : {})
+            }
+        },
         skip: !isAuthenticated,
         fetchPolicy: "network-only",
     });
@@ -53,6 +65,8 @@ export default function StockPage() {
         onCompleted: () => {
             setEditingStock(null);
             setEditQuantity("");
+            setEditUnit("kg");
+            setEditingIsWeighted(false);
             setSuccessMessage("Stock updated successfully!");
             setTimeout(() => setSuccessMessage(""), 3000);
             refetch();
@@ -81,6 +95,20 @@ export default function StockPage() {
     const products = productsData?.products?.edges || [];
     const warehouses = warehouseData?.warehouses?.edges || [];
 
+    // Helper to check if product is weighted
+    const isProductWeighted = (product: any) => {
+        return product.productType?.measurementType === "WEIGHTED";
+    };
+
+    // Format stock quantity - show kg for weighted products
+    const formatStock = (qty: number, isWeighted: boolean) => {
+        if (isWeighted) {
+            const kg = qty / 40;
+            return kg >= 1 ? `${kg.toFixed(2).replace(/\.?0+$/, "")}kg` : `${(qty * 25)}g`;
+        }
+        return qty.toString();
+    };
+
     // Filter products by search
     const filteredProducts = products.filter((edge: any) => {
         const p = edge.node;
@@ -94,33 +122,83 @@ export default function StockPage() {
         );
     });
 
-    // Calculate stats
+    // Get AVAILABLE stock for a product (quantity - quantityAllocated)
+    // This is what actually matters — total could be 1000kg but if it's all allocated, it's effectively out of stock
+    const getProductAvailableStock = (product: any): number => {
+        const variants = product.variants || [];
+        if (variants.length === 0) return 0;
+
+        return variants.reduce((sum: number, v: any) => {
+            const stocks = v.stocks || [];
+            if (stocks.length > 0) {
+                // Use quantity - quantityAllocated = actually available
+                return sum + stocks.reduce((s: number, st: any) => {
+                    const qty = st.quantity || 0;
+                    const allocated = st.quantityAllocated || 0;
+                    return s + Math.max(0, qty - allocated);
+                }, 0);
+            }
+            // Fallback: use quantityAvailable (already net of allocations in Saleor)
+            return sum + (v.quantityAvailable || 0);
+        }, 0);
+    };
+
+    // Keep for display purposes (total in warehouse, not net of allocations)
+    const getProductTotalStock = (product: any): number => {
+        const variants = product.variants || [];
+        if (variants.length === 0) return 0;
+        return variants.reduce((sum: number, v: any) => {
+            const stocks = v.stocks || [];
+            if (stocks.length > 0) {
+                return sum + stocks.reduce((s: number, st: any) => s + (st.quantity || 0), 0);
+            }
+            return sum + (v.quantityAvailable || 0);
+        }, 0);
+    };
+
+    // Calculate stats based on AVAILABLE stock (what can actually be sold)
     const stats = {
         totalProducts: products.length,
         lowStockProducts: products.filter((edge: any) => {
-            const totalStock = edge.node.variants?.reduce((sum: number, v: any) => {
-                return sum + (v.stocks?.reduce((s: number, st: any) => s + st.quantity, 0) || 0);
-            }, 0) || 0;
-            return totalStock > 0 && totalStock < 10;
+            const product = edge.node;
+            const isWeighted = isProductWeighted(product);
+            const availableStock = getProductAvailableStock(product);
+            // Low stock: weighted < 10kg (400 units at 25g each), countable < 10 items
+            const threshold = isWeighted ? 400 : 10;
+            return availableStock > 0 && availableStock < threshold;
         }).length,
         outOfStock: products.filter((edge: any) => {
-            const totalStock = edge.node.variants?.reduce((sum: number, v: any) => {
-                return sum + (v.stocks?.reduce((s: number, st: any) => s + st.quantity, 0) || 0);
-            }, 0) || 0;
-            return totalStock === 0;
+            const product = edge.node;
+            const variants = product.variants || [];
+            if (variants.length === 0) return true;
+            // Out of stock when nothing is actually available to sell
+            return getProductAvailableStock(product) === 0;
         }).length,
     };
 
+
     const handleSaveStock = () => {
         if (!editingStock) return;
-        const qty = parseInt(editQuantity);
-        if (isNaN(qty) || qty < 0) return;
+        const inputQty = parseFloat(editQuantity);
+        if (isNaN(inputQty) || inputQty < 0) return;
+
+        // Convert kg/g to base units for weighted products
+        let quantity: number;
+        if (editingIsWeighted) {
+            if (editUnit === "kg") {
+                quantity = Math.round(inputQty * 40); // 1kg = 40 units (25g each)
+            } else {
+                quantity = Math.round(inputQty / 25); // grams / 25g per unit
+            }
+        } else {
+            quantity = Math.round(inputQty);
+        }
 
         updateStock({
             variables: {
                 variantId: editingStock.variantId,
                 warehouseId: editingStock.warehouseId,
-                quantity: qty,
+                quantity,
             },
         });
     };
@@ -213,7 +291,7 @@ export default function StockPage() {
                         placeholder="Search by product name, variant, or SKU..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="input-field pl-10"
+                        className="input-field !pl-12"
                     />
                 </div>
             </div>
@@ -278,7 +356,7 @@ export default function StockPage() {
                                             <span className="badge-success">In Stock</span>
                                         )}
                                         <span className="font-semibold" style={{ color: 'var(--secondary-900)' }}>
-                                            {totalStock} total
+                                            {formatStock(totalStock, isProductWeighted(product))} total
                                         </span>
                                     </div>
                                 </div>
@@ -306,7 +384,7 @@ export default function StockPage() {
                                                         )}
                                                     </div>
                                                     <span className={`badge ${variantTotalStock > 10 ? 'badge-success' : variantTotalStock > 0 ? 'badge-warning' : 'badge-danger'}`}>
-                                                        {variantTotalStock} in stock
+                                                        {formatStock(variantTotalStock, isProductWeighted(product))} in stock
                                                     </span>
                                                 </div>
                                                 {/* Add Stock Button - always show if there are available warehouses */}
@@ -404,29 +482,42 @@ export default function StockPage() {
                                                                         </td>
                                                                         <td>
                                                                             {isEditing ? (
-                                                                                <input
-                                                                                    type="number"
-                                                                                    value={editQuantity}
-                                                                                    onChange={(e) => setEditQuantity(e.target.value)}
-                                                                                    className="input-field w-20 text-center py-1"
-                                                                                    min="0"
-                                                                                    autoFocus
-                                                                                />
+                                                                                <div className="flex items-center gap-2">
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        step={editingIsWeighted ? "0.1" : "1"}
+                                                                                        value={editQuantity}
+                                                                                        onChange={(e) => setEditQuantity(e.target.value)}
+                                                                                        className="input-field w-20 text-center py-1"
+                                                                                        min="0"
+                                                                                        autoFocus
+                                                                                    />
+                                                                                    {editingIsWeighted && (
+                                                                                        <select
+                                                                                            value={editUnit}
+                                                                                            onChange={(e) => setEditUnit(e.target.value as "kg" | "g")}
+                                                                                            className="input-field py-1 px-2"
+                                                                                        >
+                                                                                            <option value="kg">kg</option>
+                                                                                            <option value="g">g</option>
+                                                                                        </select>
+                                                                                    )}
+                                                                                </div>
                                                                             ) : (
                                                                                 <span
                                                                                     className={`font-semibold ${isLow ? 'text-yellow-600' : ''}`}
                                                                                     style={{ color: isLow ? undefined : 'var(--secondary-900)' }}
                                                                                 >
-                                                                                    {stock.quantity}
+                                                                                    {formatStock(stock.quantity, isProductWeighted(product))}
                                                                                 </span>
                                                                             )}
                                                                         </td>
                                                                         <td style={{ color: 'var(--secondary-500)' }}>
-                                                                            {stock.quantityAllocated || 0}
+                                                                            {formatStock(stock.quantityAllocated || 0, isProductWeighted(product))}
                                                                         </td>
                                                                         <td>
                                                                             <span className={`font-medium ${available === 0 ? 'text-red-600' : available < 10 ? 'text-yellow-600' : 'text-green-600'}`}>
-                                                                                {available}
+                                                                                {formatStock(available, isProductWeighted(product))}
                                                                             </span>
                                                                         </td>
                                                                         <td>
@@ -440,7 +531,7 @@ export default function StockPage() {
                                                                                         {updating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                                                                                     </button>
                                                                                     <button
-                                                                                        onClick={() => { setEditingStock(null); setEditQuantity(""); }}
+                                                                                        onClick={() => { setEditingStock(null); setEditQuantity(""); setEditUnit("kg"); setEditingIsWeighted(false); }}
                                                                                         className="btn-secondary text-sm py-1.5 px-3"
                                                                                     >
                                                                                         <X className="w-4 h-4" />
@@ -449,8 +540,17 @@ export default function StockPage() {
                                                                             ) : (
                                                                                 <button
                                                                                     onClick={() => {
+                                                                                        const isWeighted = isProductWeighted(product);
                                                                                         setEditingStock({ variantId: variant.id, warehouseId: stock.warehouse.id });
-                                                                                        setEditQuantity(stock.quantity.toString());
+                                                                                        setEditingIsWeighted(isWeighted);
+                                                                                        if (isWeighted) {
+                                                                                            // Convert base units to kg for editing
+                                                                                            const kgValue = stock.quantity / 40;
+                                                                                            setEditQuantity(kgValue.toFixed(2).replace(/\.?0+$/, ""));
+                                                                                            setEditUnit("kg");
+                                                                                        } else {
+                                                                                            setEditQuantity(stock.quantity.toString());
+                                                                                        }
                                                                                     }}
                                                                                     className="btn-secondary text-sm py-1.5 px-3 flex items-center gap-1"
                                                                                 >
@@ -508,5 +608,13 @@ export default function StockPage() {
                 </div>
             )}
         </MainLayout>
+    );
+}
+
+export default function StockPage() {
+    return (
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div>}>
+            <StockContent />
+        </Suspense>
     );
 }

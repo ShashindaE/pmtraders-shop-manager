@@ -84,12 +84,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
             setIsLoading(false);
         },
-        onError: () => {
-            // Token invalid - clear it
-            localStorage.removeItem("saleor_token");
-            localStorage.removeItem("saleor_refresh_token");
-            setHasToken(false);
+        onError: (error) => {
+            // Don't aggressively clear tokens here — the errorLink in apollo-client.tsx
+            // handles token refresh. Only clear state so the UI doesn't show stale user.
+            console.warn("[AUTH] ME_QUERY error:", error.message);
+            setUser(null);
             setIsLoading(false);
+            // errorLink will handle token refresh or logout redirect
         },
     });
 
@@ -109,39 +110,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const login = useCallback(async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
         try {
+            console.log("[AUTH] Starting login for:", email);
+
+            // CRITICAL: Always clear out any stuck tokens before attempting a new login
+            // This prevents zombie auth states where the cache thinks we are logged in.
+            localStorage.removeItem("saleor_token");
+            localStorage.removeItem("saleor_refresh_token");
+            setHasToken(false);
+            setUser(null);
+
             const { data } = await tokenCreate({
                 variables: { email, password },
+                fetchPolicy: "network-only", // Bypass Apollo cache completely
             });
 
+            console.log("[AUTH] Token create response:", data);
+
             if (data?.tokenCreate?.errors?.length > 0) {
+                console.log("[AUTH] Login errors:", data.tokenCreate.errors);
                 return { success: false, error: data.tokenCreate.errors[0].message };
             }
 
             if (data?.tokenCreate?.token) {
+                console.log("[AUTH] Token received:", data.tokenCreate.token.substring(0, 20) + "...");
                 const userData = data.tokenCreate.user;
+                console.log("[AUTH] User data:", userData);
 
                 if (!userData.isStaff) {
+                    console.log("[AUTH] User is not staff, rejecting");
                     return { success: false, error: "Access denied. Staff account required." };
                 }
 
                 // Store token
+                console.log("[AUTH] Storing token in localStorage");
                 localStorage.setItem("saleor_token", data.tokenCreate.token);
                 if (data.tokenCreate.refreshToken) {
                     localStorage.setItem("saleor_refresh_token", data.tokenCreate.refreshToken);
                 }
+                console.log("[AUTH] Token stored successfully");
 
                 // Set user immediately
                 setUser(userData);
                 setHasToken(true);
 
                 // Force reload to ensure Apollo client has the new token
+                console.log("[AUTH] Redirecting to /");
                 window.location.href = "/";
                 return { success: true };
             }
 
+            console.log("[AUTH] No token in response");
             return { success: false, error: "Login failed. Please try again." };
         } catch (error: unknown) {
-            console.error("Login error:", error);
+            console.error("[AUTH] Login error:", error);
             const errorMessage = error instanceof Error ? error.message : "An error occurred";
             return { success: false, error: errorMessage };
         }

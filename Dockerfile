@@ -13,8 +13,11 @@ RUN npm ci --legacy-peer-deps
 COPY . .
 
 # Set environment variable for build
-ARG NEXT_PUBLIC_SALEOR_API_URL=http://localhost:8000/graphql/
+ARG NEXT_PUBLIC_SALEOR_API_URL=https://api-production-9c55.up.railway.app/graphql/
 ENV NEXT_PUBLIC_SALEOR_API_URL=${NEXT_PUBLIC_SALEOR_API_URL}
+
+ARG NEXT_PUBLIC_API_URL=https://api-production-9c55.up.railway.app
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 # Build the app
 RUN npm run build

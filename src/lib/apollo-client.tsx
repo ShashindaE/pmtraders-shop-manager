@@ -2,10 +2,15 @@
 
 import { ApolloClient, InMemoryCache, ApolloProvider as Provider, createHttpLink } from "@apollo/client";
 import { setContext } from "@apollo/client/link/context";
+import { onError } from "@apollo/client/link/error";
 import { ReactNode, useMemo } from "react";
 
 const httpLink = createHttpLink({
-    uri: process.env.NEXT_PUBLIC_SALEOR_API_URL || "http://localhost:8000/graphql/",
+    // In the browser, use the local Next.js proxy to bypass CORS.
+    // On the server side (SSR), hits the API directly (no CORS issue).
+    uri: typeof window === "undefined"
+        ? (process.env.NEXT_PUBLIC_SALEOR_API_URL || "https://api-production-9c55.up.railway.app/graphql/")
+        : "/api/graphql",
 });
 
 const authLink = setContext((_, { headers }) => {
@@ -23,9 +28,99 @@ const authLink = setContext((_, { headers }) => {
     };
 });
 
+// Token refresh helper
+let refreshingPromise: Promise<string | null> | null = null;
+
+async function tryRefreshToken(): Promise<string | null> {
+    const refreshToken = localStorage.getItem("saleor_refresh_token");
+    if (!refreshToken) return null;
+
+    const apiUrl = process.env.NEXT_PUBLIC_SALEOR_API_URL || "https://api-production-9c55.up.railway.app/graphql/";
+
+    try {
+        const response = await fetch("/api/graphql", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                query: `mutation TokenRefresh($refreshToken: String!) {
+                    tokenRefresh(refreshToken: $refreshToken) {
+                        token
+                        errors { field message }
+                    }
+                }`,
+                variables: { refreshToken }
+            })
+        });
+
+        const result = await response.json();
+        const newToken = result.data?.tokenRefresh?.token;
+
+        if (newToken) {
+            console.log("[AUTH] Token refreshed successfully.");
+            localStorage.setItem("saleor_token", newToken);
+            return newToken;
+        } else {
+            console.warn("[AUTH] Token refresh failed:", result.data?.tokenRefresh?.errors);
+            return null;
+        }
+    } catch (e) {
+        console.error("[AUTH] Token refresh error:", e);
+        return null;
+    }
+}
+
+const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) => {
+    if (typeof window !== "undefined") {
+        let isExpiredToken = false;
+
+        if (graphQLErrors) {
+            graphQLErrors.forEach(({ message, extensions }) => {
+                if (
+                    message.includes("Signature has expired") ||
+                    message.includes("JSONWebTokenError") ||
+                    extensions?.code === "UNAUTHENTICATED"
+                ) {
+                    isExpiredToken = true;
+                }
+            });
+        }
+
+        if (networkError && 'statusCode' in networkError && networkError.statusCode === 401) {
+            isExpiredToken = true;
+        }
+
+        if (isExpiredToken) {
+            // Try to refresh before forcing logout
+            if (!refreshingPromise) {
+                refreshingPromise = tryRefreshToken().finally(() => {
+                    refreshingPromise = null;
+                });
+            }
+
+            refreshingPromise.then((newToken) => {
+                if (newToken) {
+                    // Token refreshed — reload to use the new token
+                    // (Apollo singleton caches the old token, simplest fix is reload)
+                    console.log("[AUTH] Reloading with refreshed token...");
+                    window.location.reload();
+                } else {
+                    // Refresh failed — force logout
+                    console.warn("[AUTH] Token expired and refresh failed, forcing logout.");
+                    localStorage.removeItem("saleor_token");
+                    localStorage.removeItem("saleor_refresh_token");
+
+                    if (!window.location.pathname.includes('/login')) {
+                        window.location.href = "/login";
+                    }
+                }
+            });
+        }
+    }
+});
+
 function makeClient() {
     return new ApolloClient({
-        link: authLink.concat(httpLink),
+        link: errorLink.concat(authLink.concat(httpLink)),
         cache: new InMemoryCache(),
         defaultOptions: {
             watchQuery: {
@@ -37,6 +132,13 @@ function makeClient() {
 
 // Client singleton
 let apolloClientInstance: ApolloClient<any> | null = null;
+
+export function resetApolloClient() {
+    if (apolloClientInstance) {
+        apolloClientInstance.clearStore();
+        apolloClientInstance = null;
+    }
+}
 
 export function getApolloClient() {
     if (typeof window === "undefined") {

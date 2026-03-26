@@ -160,7 +160,9 @@ export function ApolloProvider({ children }: { children: ReactNode }) {
 // Custom function for file uploads using fetch with multipart/form-data
 export async function uploadProductImage(productId: string, file: File, alt?: string): Promise<{ success: boolean; error?: string; media?: any }> {
     const token = typeof window !== "undefined" ? localStorage.getItem("saleor_token") || "" : "";
-    const apiUrl = process.env.NEXT_PUBLIC_SALEOR_API_URL || "http://localhost:8000/graphql/";
+    const apiUrl = typeof window !== "undefined" 
+        ? "/api/graphql" 
+        : (process.env.NEXT_PUBLIC_SALEOR_API_URL || "https://api-production-9c55.up.railway.app/graphql/");
 
     const operations = JSON.stringify({
         query: `
